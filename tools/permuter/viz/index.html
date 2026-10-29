@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Permuter best score</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-0: #f3f2ef;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7974;
+  --grid: #e4e3df;
+  --axis: #c9c8c2;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e86;
+    --grid: #2b2b29;
+    --axis: #45443f;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+  }
+}
+html, body { margin: 0; }
+body { font: 13px/1.4 system-ui, sans-serif; }
+.viz-root { background: var(--surface-0); color: var(--text-primary); min-height: 100vh; padding: 24px; box-sizing: border-box; }
+.card { background: var(--surface-1); border-radius: 8px; padding: 20px 24px; max-width: 1000px; }
+h1 { font-size: 16px; margin: 0 0 2px; font-weight: 600; }
+.sub { color: var(--text-secondary); margin: 0 0 12px; }
+.legend { display: flex; gap: 20px; margin-bottom: 8px; color: var(--text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.key { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.chart { position: relative; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--text-muted); font-size: 11px; }
+svg .label { fill: var(--text-primary); font-size: 12px; font-weight: 600; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--axis);
+  border-radius: 6px; padding: 6px 10px; box-shadow: 0 2px 8px rgb(0 0 0 / .12); display: none; white-space: nowrap; }
+.tip .time { color: var(--text-muted); margin-bottom: 4px; }
+.tip .row { display: flex; align-items: center; gap: 8px; }
+.tip .row b { min-width: 48px; text-align: right; }
+.tip .row span:last-child { color: var(--text-secondary); }
+table { border-collapse: collapse; margin-top: 16px; color: var(--text-secondary); }
+th, td { text-align: left; padding: 4px 16px 4px 0; }
+th { color: var(--text-muted); font-weight: 500; }
+td.num { text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.stale { opacity: .6; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="card">
+    <h1>Permuter best score over time</h1>
+    <p class="sub">Lower is better; 0 is a match. Log scale. Refreshes every 5 s.</p>
+    <div class="legend" id="legend"></div>
+    <div class="chart" id="chart">
+      <svg id="svg" viewBox="0 0 960 380" role="img" aria-label="Best permuter score over time per run"></svg>
+      <div class="tip" id="tip"></div>
+    </div>
+    <table id="table"><thead><tr><th>Run</th><th>Best</th><th>Iterations</th><th>Status</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+<script>
+const W = 960, H = 380, M = { l: 52, r: 90, t: 12, b: 28 };
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("svg"), tip = document.getElementById("tip");
+let data = null, page = null;
+
+const color = i => `var(--series-${(i % 8) + 1})`;
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
+const fmtTime = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+function series() {
+  const now = Date.now() / 1000;
+  return data.runs.map(r => {
+    const pts = r.points.slice();
+    if (pts.length) pts.push({ t: r.alive ? now : pts[pts.length - 1].t, score: pts[pts.length - 1].score, tail: true });
+    return { ...r, pts };
+  });
+}
+
+function bestAt(pts, t) {
+  let v = null;
+  for (const p of pts) { if (p.t <= t) v = p.score; else break; }
+  return v;
+}
+
+function render() {
+  const S = series();
+  const all = S.flatMap(s => s.pts);
+  if (!all.length) return;
+  const t0 = Math.min(...all.map(p => p.t)), t1 = Math.max(...all.map(p => p.t), t0 + 60);
+  const lo = Math.max(1, Math.min(...all.map(p => p.score)));
+  const hi = Math.max(...all.map(p => p.score));
+  const y0 = Math.floor(Math.log10(lo)), y1 = Math.ceil(Math.log10(Math.max(hi, lo * 10)));
+  const x = t => M.l + (t - t0) / (t1 - t0) * (W - M.l - M.r);
+  const y = s => { const v = Math.log10(Math.max(s, 10 ** y0)); return M.t + (y1 - v) / (y1 - y0) * (H - M.t - M.b); };
+
+  svg.replaceChildren();
+  for (let e = y0; e <= y1; e++) {
+    const v = 10 ** e;
+    el("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: "var(--grid)" }, svg);
+    el("text", { x: M.l - 8, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = v >= 1000 ? `${v / 1000}k` : v;
+  }
+  const ticks = 6;
+  for (let i = 0; i <= ticks; i++) {
+    const t = t0 + (t1 - t0) * i / ticks;
+    el("text", { x: x(t), y: H - 8, "text-anchor": "middle" }, svg).textContent = new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  el("line", { x1: M.l, x2: W - M.r, y1: H - M.b, y2: H - M.b, stroke: "var(--axis)" }, svg);
+
+  const labels = [];
+  S.forEach((s, i) => {
+    if (!s.pts.length) return;
+    let d = `M${x(s.pts[0].t)},${y(s.pts[0].score)}`;
+    for (let k = 1; k < s.pts.length; k++) d += `H${x(s.pts[k].t)}V${y(s.pts[k].score)}`;
+    el("path", { d, fill: "none", stroke: color(i), "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    s.pts.filter(p => !p.tail).forEach(p => {
+      el("circle", { cx: x(p.t), cy: y(p.score), r: 4, fill: color(i), stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+    });
+    const last = s.pts[s.pts.length - 1];
+    labels.push({ y: y(last.score), x: x(last.t), text: `${s.run} ${last.score}` });
+  });
+  labels.sort((a, b) => a.y - b.y);
+  for (let k = 1; k < labels.length; k++) labels[k].y = Math.max(labels[k].y, labels[k - 1].y + 15);
+  labels.forEach(l => { el("text", { x: l.x + 8, y: l.y + 4, class: "label" }, svg).textContent = l.text; });
+
+  const cross = el("line", { y1: M.t, y2: H - M.b, stroke: "var(--axis)", visibility: "hidden" }, svg);
+  const hit = el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", ev => {
+    const r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) * W / r.width;
+    const t = t0 + (sx - M.l) / (W - M.l - M.r) * (t1 - t0);
+    cross.setAttribute("x1", sx); cross.setAttribute("x2", sx); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    const tm = document.createElement("div"); tm.className = "time"; tm.textContent = fmtTime(t); tip.appendChild(tm);
+    S.forEach((s, i) => {
+      const v = bestAt(s.pts, t);
+      const row = document.createElement("div"); row.className = "row";
+      const k = document.createElement("span"); k.className = "key"; k.style.background = color(i);
+      const b = document.createElement("b"); b.textContent = v ?? "–";
+      const n = document.createElement("span"); n.textContent = s.run;
+      row.append(k, b, n); tip.appendChild(row);
+    });
+    tip.style.display = "block";
+    const px = ev.clientX - r.left, py = ev.clientY - r.top;
+    tip.style.left = `${px + 14 + tip.offsetWidth > r.width ? px - tip.offsetWidth - 14 : px + 14}px`;
+    tip.style.top = `${py - 10}px`;
+  });
+  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); });
+
+  const legend = document.getElementById("legend");
+  legend.replaceChildren(...S.map((s, i) => {
+    const sp = document.createElement("span"); const k = document.createElement("i"); k.className = "key"; k.style.background = color(i);
+    sp.append(k, document.createTextNode(s.run)); return sp;
+  }));
+
+  const tbody = document.querySelector("#table tbody");
+  tbody.replaceChildren(...S.map(s => {
+    const tr = document.createElement("tr");
+    const best = s.points.length ? s.points[s.points.length - 1].score : "–";
+    [[s.run], [best, "num"], [s.iterations ?? "–", "num"], [s.alive ? "running" : "stopped"]].forEach(([v, c]) => {
+      const td = document.createElement("td"); td.textContent = v; if (c) td.className = c; tr.appendChild(td);
+    });
+    return tr;
+  }));
+}
+
+async function refresh() {
+  const chart = document.getElementById("chart");
+  chart.classList.add("stale");
+  try {
+    data = await (await fetch("/data", { cache: "no-store" })).json();
+    if (page !== null && data.page !== page) location.reload();
+    page = data.page;
+    render();
+  } catch (e) {}
+  chart.classList.remove("stale");
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
