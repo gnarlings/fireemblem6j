@@ -32,6 +32,7 @@ while [ $((end - SECONDS)) -gt 30 ]; do
             mkdir -p "$dir/gen-$gen"
             mv "$dir/base.c" "$dir"/output-* "$dir/run.log" "$dir/gen-$gen/"
             cp "$dir/gen-$gen/$o/source.c" "$dir/base.c"
+            python3 "$here/permignore.py" "$dir/base.c"
             echo "$(date +%T) gen $gen: $base -> $b"
             [ "$b" = 0 ] && { echo "ZERO $dir/base.c"; exit 0; }
             break

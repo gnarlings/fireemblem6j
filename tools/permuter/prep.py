@@ -4,16 +4,20 @@
 usage: prep.py SRC FUNC SEED OUTDIR
   SRC    C file that holds FUNC, e.g. src/unitlistscreen.c (built without NONMATCHING, so FUNC is naked asm)
   FUNC   function name
-  SEED   file whose last function definition is the C candidate to start from
+  SEED   file whose last function definition (plus any inline_fn helpers) is the C candidate to start from;
+         lines with ({ }) must each hold one whole statement
   OUTDIR work dir to create
 """
 import os, re, subprocess, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import permignore
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CPP = ["arm-none-eabi-cpp", "-I", "include", "-I", "asm/include", "-I", "tools/agbcc/include", "-I", ".", "-nostdinc", "-undef"]
 COMPILE_SH = """#!/bin/bash
 cd {repo}
-iconv -f UTF-8 -t CP932 "$1" | tools/agbcc/bin/old_agbcc -mthumb-interwork -fhex-asm -O2 -o "$3.s" && arm-none-eabi-as -mcpu=arm7tdmi "$3.s" -o "$3"
+iconv -f UTF-8 -t CP932 "$1" | tools/agbcc/bin/old_agbcc -mthumb-interwork -Wimplicit -Wparentheses -Werror -fhex-asm -O2 -o "$3.s" && arm-none-eabi-as -mcpu=arm7tdmi "$3.s" -o "$3"
 r=$?; rm -f "$3.s"; exit $r
 """
 
@@ -80,12 +84,15 @@ def truncate_after(s, func):
     sys.exit(f"{func} not found")
 
 
-def last_function(text):
-    found = [(h, e) for h, b, e in blocks(text) if fn_name(text[h:b])]
+def seed_function(text):
+    """The seed's last function, preceded by any permuter-made inline_fn helpers."""
+    text = re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.S)
+    found = [(h, b, e) for h, b, e in blocks(text) if fn_name(text[h:b])]
     if not found:
         sys.exit("seed has no function definition")
-    h, e = found[-1]
-    return text[h:e].strip()
+    helpers = [text[h:e].strip() for h, b, e in found[:-1] if re.fullmatch(r"inline_fn\d*", fn_name(text[h:b]))]
+    h, b, e = found[-1]
+    return "\n\n".join(helpers + [text[h:e].strip()])
 
 
 def main():
@@ -105,8 +112,7 @@ def main():
     subprocess.run([os.path.join(out, "compile.sh"), os.path.abspath(target_c), "-o", os.path.abspath(os.path.join(out, "target.o"))], check=True)
     os.remove(target_c)
 
-    seed_text = re.sub(r"//[^\n]*|/\*.*?\*/", "", open(seed).read(), flags=re.S)
-    base = rewrite(pp, func, replace=last_function(seed_text))
+    base = rewrite(pp, func, replace=permignore.wrap(seed_function(open(seed).read())))
     base = re.sub(r"^#.*$", "", strip_attributes(base), flags=re.M)
     base = truncate_after(rewrite(base, func), func)
     with open(os.path.join(out, "base.c"), "w") as f:
@@ -114,4 +120,5 @@ def main():
     print(f"{out}: ready")
 
 
-main()
+if __name__ == "__main__":
+    main()
