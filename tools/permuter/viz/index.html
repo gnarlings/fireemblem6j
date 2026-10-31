@@ -66,11 +66,41 @@ th, td { text-align: left; padding: 4px 16px 4px 0; }
 th { color: var(--text-muted); font-weight: 500; }
 td.num { text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .stale { opacity: .6; }
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.tabs button { font: inherit; color: var(--text-secondary); background: none; border: 1px solid var(--axis); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+.tabs button[aria-selected="true"] { color: var(--text-primary); background: var(--surface-0); font-weight: 600; }
+[hidden] { display: none !important; }
+.summary { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 16px; }
+.summary b { display: block; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.summary span { color: var(--text-muted); }
+details { border-top: 1px solid var(--grid); padding: 8px 0; }
+summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.rank { color: var(--text-muted); min-width: 24px; font-variant-numeric: tabular-nums; }
+.size { font-weight: 600; }
+.when { color: var(--text-muted); }
+.smell { color: var(--series-2); }
+.clean { color: var(--series-3); }
+pre { margin: 8px 0 4px; padding: 8px 12px; background: var(--surface-0); border-radius: 6px; overflow-x: auto; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+pre div { white-space: pre; }
+pre .add { color: var(--series-3); }
+pre .del { color: var(--series-8); }
+.empty { color: var(--text-secondary); }
 </style>
 </head>
 <body>
 <div class="viz-root">
   <div class="card">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-matches" aria-selected="true">Matches</button>
+      <button role="tab" id="tab-chart" aria-selected="false">Score chart</button>
+    </div>
+    <div id="panel-matches">
+      <h1>Matching variants</h1>
+      <p class="sub">Score 0 from the permuter, not yet checked against the ROM. Cleanest first: fewest smells, then the smallest change from the base. Refreshes every 5 s.</p>
+      <div class="summary" id="summary"></div>
+      <div id="matches"></div>
+    </div>
+    <div id="panel-chart" hidden>
     <h1>Permuter best score over time</h1>
     <p class="sub">Lower is better; 0 is a match. Log scale. Refreshes every 5 s.</p>
     <div class="legend" id="legend"></div>
@@ -79,6 +109,7 @@ td.num { text-align: right; color: var(--text-primary); font-variant-numeric: ta
       <div class="tip" id="tip"></div>
     </div>
     <table id="table"><thead><tr><th>Run</th><th>Best</th><th>Iterations</th><th>Status</th></tr></thead><tbody></tbody></table>
+    </div>
   </div>
 </div>
 <script>
@@ -186,6 +217,49 @@ function render() {
   }));
 }
 
+function showTab(name) {
+  for (const t of ["matches", "chart"]) {
+    document.getElementById(`tab-${t}`).setAttribute("aria-selected", t === name);
+    document.getElementById(`panel-${t}`).hidden = t !== name;
+  }
+}
+document.getElementById("tab-matches").onclick = () => showTab("matches");
+document.getElementById("tab-chart").onclick = () => showTab("chart");
+
+const div = (cls, text, tag = "div") => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+let shown = null;
+
+function renderMatches(m) {
+  const best = m.variants[0];
+  const running = data.runs.some(r => r.alive);
+  const its = data.runs.reduce((n, r) => n + (r.iterations ?? 0), 0);
+  document.getElementById("summary").replaceChildren(...[
+    [m.total, "matching variants"],
+    [best ? best.diff.length : "–", "lines changed in the best"],
+    [its ? (m.total ? Math.round(its / m.total).toLocaleString() : "–") : "–", "iterations per match"],
+    [its.toLocaleString(), "iterations so far"],
+    [running ? "running" : "stopped", "search"],
+  ].map(([v, l]) => { const d = div(); d.append(div("", v, "b"), div("", l, "span")); return d; }));
+
+  const sig = JSON.stringify(m.variants.map(v => v.run + v.name)) + m.total;
+  if (sig === shown) return;
+  shown = sig;
+  const box = document.getElementById("matches");
+  if (!m.variants.length) { box.replaceChildren(div("empty", "No matches yet.")); return; }
+  box.replaceChildren(...m.variants.map((v, i) => {
+    const d = div("", undefined, "details");
+    if (i === 0) d.open = true;
+    const s = div("", undefined, "summary");
+    s.append(div("rank", `${i + 1}`, "span"), div("size", `${v.diff.length} lines changed`, "span"));
+    s.append(v.smells.length ? div("smell", v.smells.join(", "), "span") : div("clean", "no smells", "span"));
+    s.append(div("when", `${v.name}, found ${fmtTime(v.t)}`, "span"));
+    const pre = div("", undefined, "pre");
+    pre.append(...v.diff.map(([sign, l]) => div(sign === "+" ? "add" : "del", `${sign} ${l}`)));
+    d.append(s, pre);
+    return d;
+  }));
+}
+
 async function refresh() {
   const chart = document.getElementById("chart");
   chart.classList.add("stale");
@@ -194,6 +268,7 @@ async function refresh() {
     if (page !== null && data.page !== page) location.reload();
     page = data.page;
     render();
+    renderMatches(await (await fetch("/matches", { cache: "no-store" })).json());
   } catch (e) {}
   chart.classList.remove("stale");
 }
