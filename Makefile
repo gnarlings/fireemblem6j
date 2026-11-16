@@ -14,7 +14,7 @@ BUILD_DIR = build
 CLEAN_FILES :=
 CLEAN_DIRS  :=
 
-all: compare
+all: $(BUILD_NAME).gba
 
 # ====================
 # = TOOL DEFINITIONS =
